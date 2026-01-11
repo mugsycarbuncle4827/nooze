@@ -61,7 +61,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add seen_articles.json index.html || true
+          git add seen_articles.json index.html archive/ || true
           git diff --staged --quiet || git commit -m "Update digest [skip ci]"
           git push || true
       
