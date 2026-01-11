@@ -74,7 +74,8 @@ FEEDS = {
 MAX_AGE_HOURS = 24
 
 # Tracking file for deduplication (same folder as script)
-SEEN_FILE = Path(__file__).parent / "seen_articles.json"
+SCRIPT_DIR = Path(__file__).parent.resolve()
+SEEN_FILE = SCRIPT_DIR / "seen_articles.json"
 
 # How long to remember articles (days) - prevents file from growing forever
 SEEN_RETENTION_DAYS = 7
@@ -85,15 +86,9 @@ FILTER_MODEL = "claude-haiku-4-5-20251001"
 # Model for synthesis (Sonnet = better quality)
 SYNTHESIS_MODEL = "claude-sonnet-4-20250514"
 
-# Email configuration (from environment variables) - DEPRECATED, using GitHub Pages now
-# EMAIL_SENDER = os.environ.get("EMAIL_SENDER", "")
-# EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "")
-# EMAIL_RECIPIENT = os.environ.get("EMAIL_RECIPIENT", EMAIL_SENDER)
-# SMTP_SERVER = "smtp.mail.yahoo.com"
-# SMTP_PORT = 587
-
-# Output file for GitHub Pages
-OUTPUT_HTML = Path(__file__).parent / "index.html"
+# Output files for GitHub Pages
+OUTPUT_HTML = SCRIPT_DIR / "index.html"
+ARCHIVE_DIR = SCRIPT_DIR / "archive"
 
 # =============================================================================
 # PERSONALIZATION - THE TIRED OPENER
@@ -110,6 +105,8 @@ VIBE:
 - 8-12 words per bullet — enough to know what happened
 - Em dashes welcome. Fragments okay. But the reader should understand the story.
 - You're noting things with a sigh, not performing
+
+IMPORTANT: Skip deaths, tragedies, and genuinely dark stories. This section is for weary corporate absurdity, not grief. If someone died, don't feature it here.
 
 Write EXACTLY 4 bullets. No more, no less.
 
@@ -130,10 +127,10 @@ Examples of TOO CRYPTIC (don't do this):
 * "CAA appealing because losing gracefully is dead"
 
 Examples of RIGHT ENERGY:
-* "Busfield arrest warrant— directing credits won't save you in New Mexico"
 * "CAA appealing the Range arbitration like that ever works"
-* "T.K. Carter dead at 69— the Thing outlived another one"
 * "someone at Netflix approved 'KPop Demon Hunters Monopoly' and went home"
+* "Disney painting another queue entrance— it's always painting"
+* "Newsom counting AI tax revenue like it's already real money"
 
 TODAY'S ARTICLES:
 """
@@ -300,15 +297,20 @@ def get_article_hash(article):
 
 def load_seen_articles():
     """Load previously seen article hashes"""
+    print(f"  Looking for seen file at: {SEEN_FILE}")
     if SEEN_FILE.exists():
         try:
             with open(SEEN_FILE, "r") as f:
                 data = json.load(f)
                 # Clean old entries
                 cutoff = (datetime.now() - timedelta(days=SEEN_RETENTION_DAYS)).isoformat()
-                return {k: v for k, v in data.items() if v > cutoff}
-        except:
+                cleaned = {k: v for k, v in data.items() if v > cutoff}
+                print(f"  Loaded {len(cleaned)} seen articles (cleaned from {len(data)})")
+                return cleaned
+        except Exception as e:
+            print(f"  Error loading seen file: {e}")
             return {}
+    print(f"  No seen file found, starting fresh")
     return {}
 
 
@@ -316,6 +318,7 @@ def save_seen_articles(seen):
     """Save seen article hashes with timestamps"""
     with open(SEEN_FILE, "w") as f:
         json.dump(seen, f)
+    print(f"  Saved {len(seen)} seen articles to {SEEN_FILE}")
 
 
 def mark_as_seen(seen, articles):
@@ -483,12 +486,33 @@ def synthesize_digest(client, filtered_articles):
     for cat in categories:
         categories[cat].sort(key=lambda x: 0 if x.get('priority') == 'high' else 1)
     
+    # Soft article limits per category (can exceed for big news)
+    category_limits = {
+        "newspaper": 12,
+        "entertainment": 3,
+        "ai_legal": 3,
+        "theme_parks": 2,
+        "food": 3
+    }
+    
+    # Apply soft limits - take top N by priority
+    for cat in categories:
+        limit = category_limits.get(cat, 5)
+        if len(categories[cat]) > limit:
+            # Keep all high priority, then fill with medium up to limit
+            high_priority = [a for a in categories[cat] if a.get('priority') == 'high']
+            medium_priority = [a for a in categories[cat] if a.get('priority') != 'high']
+            if len(high_priority) >= limit:
+                categories[cat] = high_priority[:limit + 2]  # Soft limit: allow overflow for big news
+            else:
+                categories[cat] = high_priority + medium_priority[:limit - len(high_priority)]
+    
     # Process articles in batches by category
     all_summaries = {}
     
     category_labels = {
-        "entertainment": "Entertainment Industry",
         "newspaper": "News",
+        "entertainment": "Entertainment Industry",
         "ai_legal": "AI & Legal Tech",
         "theme_parks": "Theme Parks",
         "food": "LA Food Scene"
@@ -506,9 +530,13 @@ def synthesize_digest(client, filtered_articles):
             for i, a in enumerate(articles)
         ])
         
+        target_count = category_limits.get(cat_key, 5)
+        
         prompt = f"""For the articles below, create a clean digest entry for each UNIQUE story.
 
 CRITICAL: If multiple articles cover the SAME story (e.g., same event reported by Deadline, Variety, and THR), COMBINE them into ONE entry using the best details from each. Only create separate entries if articles cover genuinely different angles or breaking developments.
+
+Target approximately {target_count} entries for this section (fewer if stories overlap, more if genuinely distinct).
 
 For each unique story:
 1. REWRITTEN HEADLINE: Essential context, no clickbait, standalone-readable, under 15 words.
@@ -553,7 +581,8 @@ ARTICLES TO PROCESS:
     # Format final digest
     digest_parts = []
     
-    category_order = ["entertainment", "newspaper", "ai_legal", "theme_parks", "food"]
+    # News first, then entertainment, then everything else
+    category_order = ["newspaper", "entertainment", "ai_legal", "theme_parks", "food"]
     
     for cat_key in category_order:
         if cat_key in all_summaries and all_summaries[cat_key].strip():
@@ -683,7 +712,7 @@ def generate_html(title, body_markdown, article_count, total_count):
 </head>
 <body>
     <h1>Iwitless Nooze</h1>
-    <div class="timestamp">{timestamp}</div>
+    <div class="timestamp">{timestamp} · <a href="archive/">Past editions</a></div>
     {html_body}
     <div class="meta">Generated from {article_count} filtered articles (of {total_count} new)</div>
 </body>
@@ -694,6 +723,102 @@ def generate_html(title, body_markdown, article_count, total_count):
         f.write(html_page)
     
     print(f"HTML page generated: {OUTPUT_HTML}")
+    
+    # Archive this edition
+    ARCHIVE_DIR.mkdir(exist_ok=True)
+    archive_filename = f"{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+    archive_path = ARCHIVE_DIR / archive_filename
+    with open(archive_path, 'w', encoding='utf-8') as f:
+        f.write(html_page)
+    print(f"Archived to: {archive_path}")
+    
+    # Update archive index
+    update_archive_index()
+
+
+def update_archive_index():
+    """Generate an index page listing all archived digests"""
+    
+    if not ARCHIVE_DIR.exists():
+        return
+    
+    # Get all archived HTML files, sorted newest first
+    archives = sorted(ARCHIVE_DIR.glob("*.html"), reverse=True)
+    archives = [a for a in archives if a.name != "index.html"]
+    
+    links_html = ""
+    for archive in archives[:100]:  # Keep last 100
+        # Parse date from filename: 20260110_1430.html
+        try:
+            date_str = archive.stem  # 20260110_1430
+            dt = datetime.strptime(date_str, "%Y%m%d_%H%M")
+            display_date = dt.strftime("%A, %B %d, %Y at %I:%M %p")
+        except:
+            display_date = archive.stem
+        
+        links_html += f'<li><a href="{archive.name}">{display_date}</a></li>\n'
+    
+    index_html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iwitless Nooze Archive</title>
+    <style>
+        body {{
+            font-family: Georgia, 'Times New Roman', serif;
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }}
+        h1 {{
+            color: #ff6b6b;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }}
+        a {{
+            color: #4ecdc4;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+        ul {{
+            list-style: none;
+            padding: 0;
+        }}
+        li {{
+            margin: 0.8em 0;
+            padding-left: 1.5em;
+            position: relative;
+        }}
+        li:before {{
+            content: "→";
+            color: #ff6b6b;
+            position: absolute;
+            left: 0;
+        }}
+        .back {{
+            margin-bottom: 2em;
+        }}
+    </style>
+</head>
+<body>
+    <div class="back"><a href="../">← Current edition</a></div>
+    <h1>Archive</h1>
+    <ul>
+{links_html}
+    </ul>
+</body>
+</html>'''
+    
+    with open(ARCHIVE_DIR / "index.html", 'w', encoding='utf-8') as f:
+        f.write(index_html)
+    
+    print(f"Archive index updated with {len(archives)} editions")
 
 
 def main():
