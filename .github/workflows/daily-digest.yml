@@ -1,0 +1,78 @@
+# .github/workflows/daily-digest.yml
+# 
+# Iwitless Nooze - runs 3x daily and publishes to GitHub Pages
+# 
+# SETUP:
+# 1. Create a private GitHub repo
+# 2. Add rss_digest.py to the repo root
+# 3. Create folder: .github/workflows/
+# 4. Put this file in that folder as daily-digest.yml
+# 5. Go to repo Settings > Secrets and variables > Actions
+# 6. Add this secret:
+#    - ANTHROPIC_API_KEY: your Claude API key
+# 7. Go to repo Settings > Pages
+#    - Source: "GitHub Actions"
+# 8. Bookmark: https://YOUR-USERNAME.github.io/YOUR-REPO-NAME/
+
+name: Iwitless Nooze
+
+on:
+  schedule:
+    # Scheduled 1 hour earlier than "ideal" so DST doesn't push past wake time
+    # Winter (PST): 4am, 10am, 4pm
+    # Summer (PDT): 5am, 11am, 5pm
+    - cron: '0 12 * * *'
+    - cron: '0 18 * * *'
+    - cron: '0 0 * * *'
+  
+  # Also allow manual trigger for testing
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  generate-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install feedparser anthropic
+      
+      - name: Run digest script
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python rss_digest.py
+      
+      - name: Commit updated files
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add seen_articles.json index.html || true
+          git diff --staged --quiet || git commit -m "Update digest [skip ci]"
+          git push || true
+      
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
