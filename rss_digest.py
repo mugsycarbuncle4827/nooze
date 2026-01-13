@@ -18,6 +18,7 @@ import sys
 import json
 import re
 import hashlib
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from time import mktime
 from pathlib import Path
@@ -57,6 +58,15 @@ FEEDS = {
     "LA Times": "https://www.latimes.com/news/rss2.0.xml",
     "The Atlantic": "https://www.theatlantic.com/feed/all/",
     "The Economist": "https://www.economist.com/finance-and-economics/rss.xml",
+    
+    # International / Wire Services
+    "BBC News": "https://feeds.bbci.co.uk/news/rss.xml",
+    "BBC Business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    
+    # Tech (for CES, AI policy, etc.)
+    "The Verge": "https://www.theverge.com/rss/index.xml",
+    "TechCrunch": "https://techcrunch.com/feed/",
+    "Ars Technica": "https://feeds.arstechnica.com/arstechnica/index",
     
     # AI/Legal
     "Artificial Lawyer": "https://www.artificiallawyer.com/feed/",
@@ -110,27 +120,35 @@ IMPORTANT: Skip deaths, tragedies, and genuinely dark stories. This section is f
 
 Write EXACTLY 4 bullets. No more, no less.
 
+VARIETY IS KEY. Don't write 4 bullets that all sound the same. Mix it up:
+- One might be a flat statement of fact
+- One might end with "again" or "naturally"
+- One might be a tired question
+- One might just name the absurdity without commentary
+- One might note an irony
+Avoid the pattern of "[thing happened] because [sarcastic reason]" for every bullet.
+
 Format exactly:
 
 Unfortunately—
-* [tired observation about story 1]
-* [sardonic note about story 2]
-* [weary take on story 3]
-* [resigned observation about story 4]
+* [first observation]
+* [second observation]
+* [third observation]
+* [fourth observation]
 
-Examples of TOO POLISHED (don't do this):
-* "Timothy Busfield proves even thirtysomething actors can't escape New Mexico jurisdiction"
-* "CAA's confidential arbitration details leak faster than a Marvel plot synopsis"
+Examples of GOOD VARIETY (notice how different they sound):
+* "CES unveiled seventeen AI refrigerators"
+* "Disney building walls around another ride— what else is new"
+* "Powell said the thing and markets did the thing"
+* "how many times can Paramount threaten a proxy fight"
+* "UK investigating X, which will definitely accomplish something"
+* "TSMC building another Arizona plant, Arizona still confused"
 
-Examples of TOO CRYPTIC (don't do this):
-* "busfield. new mexico. the desert knows"
-* "CAA appealing because losing gracefully is dead"
-
-Examples of RIGHT ENERGY:
-* "CAA appealing the Range arbitration like that ever works"
-* "someone at Netflix approved 'KPop Demon Hunters Monopoly' and went home"
-* "Disney painting another queue entrance— it's always painting"
-* "Newsom counting AI tax revenue like it's already real money"
+Examples of BAD (all the same pattern):
+* "Disney building walls because Imagineers need projects"
+* "Paramount suing WBD because lawyers need work"
+* "UK investigating X because regulators need headlines"
+* "Powell speaking because the Fed needs attention"
 
 TODAY'S ARTICLES:
 """
@@ -179,19 +197,24 @@ INCLUDE (high priority):
 - Antitrust actions affecting media/tech
 - California legislation affecting entertainment or tech
 - Major corporate news about media companies
+- Federal Reserve news, interest rate decisions, economic policy
+- Major international developments (especially trade, geopolitics affecting business)
 
 INCLUDE (medium priority):
 - Significant national political developments
 - Tech industry major moves
 - Los Angeles local news of significance
+- Major economic indicators, market moves
+- International crisis or conflict news
 
 EXCLUDE:
 - Sports (unless business angle)
-- Lifestyle/travel
-- Opinion pieces (unless highly relevant)
+- Lifestyle/travel fluff
 - Weather
-- Most crime stories
-- Celebrity profiles
+- Routine local crime
+- Celebrity profiles (unless business angle)
+
+Be MORE permissive than restrictive. When in doubt, include it.
 
 For each article, respond with JSON:
 {"include": true/false, "priority": "high"/"medium"/"low", "reason": "brief explanation"}""",
@@ -265,6 +288,34 @@ EXCLUDE:
 - Bar news where the bar doesn't have food (reader doesn't drink, so cocktail bars, wine bars, dive bars without food = skip)
 
 For each article, respond with JSON:
+{"include": true/false, "priority": "high"/"medium"/"low", "reason": "brief explanation"}""",
+
+    "tech": """You are filtering tech news for an entertainment industry executive interested in tech's business and policy implications.
+
+INCLUDE (high priority):
+- AI policy, regulation, and legislation
+- Major tech company business moves (acquisitions, layoffs, strategy shifts)
+- CES and major tech event announcements with business implications
+- Tech antitrust developments
+- Streaming/entertainment tech news
+- Federal Reserve, economic policy affecting tech
+- International tech/trade policy (tariffs, chip restrictions, etc.)
+
+INCLUDE (medium priority):
+- Major product launches from Apple, Google, Microsoft, etc.
+- Tech industry trends and analysis
+- Social media platform changes with business/policy angle
+- Cryptocurrency/blockchain with regulatory angle
+
+EXCLUDE:
+- Consumer gadget reviews (unless major strategic product)
+- "How to" guides and tutorials
+- Gaming news (unless business angle)
+- Routine software updates
+- Listicles and gift guides
+- Most phone/laptop reviews
+
+For each article, respond with JSON:
 {"include": true/false, "priority": "high"/"medium"/"low", "reason": "brief explanation"}"""
 }
 
@@ -278,6 +329,11 @@ FEED_CATEGORIES = {
     "LA Times": "newspaper",
     "The Atlantic": "newspaper",
     "The Economist": "newspaper",
+    "BBC News": "newspaper",
+    "BBC Business": "newspaper",
+    "The Verge": "tech",
+    "TechCrunch": "tech",
+    "Ars Technica": "tech",
     "Artificial Lawyer": "ai_legal",
     "WDWNT": "theme_parks",
     "Touring Plans": "theme_parks",
@@ -473,6 +529,7 @@ def synthesize_digest(client, filtered_articles):
     categories = {
         "entertainment": [],
         "newspaper": [],
+        "tech": [],
         "ai_legal": [],
         "theme_parks": [],
         "food": []
@@ -488,11 +545,12 @@ def synthesize_digest(client, filtered_articles):
     
     # Soft article limits per category (can exceed for big news)
     category_limits = {
-        "newspaper": 12,
-        "entertainment": 3,
-        "ai_legal": 3,
-        "theme_parks": 2,
-        "food": 3
+        "newspaper": 15,
+        "tech": 8,
+        "entertainment": 5,
+        "ai_legal": 4,
+        "theme_parks": 3,
+        "food": 4
     }
     
     # Apply soft limits - take top N by priority
@@ -512,6 +570,7 @@ def synthesize_digest(client, filtered_articles):
     
     category_labels = {
         "newspaper": "News",
+        "tech": "Tech & Business",
         "entertainment": "Entertainment Industry",
         "ai_legal": "AI & Legal Tech",
         "theme_parks": "Theme Parks",
@@ -581,8 +640,8 @@ ARTICLES TO PROCESS:
     # Format final digest
     digest_parts = []
     
-    # News first, then entertainment, then everything else
-    category_order = ["newspaper", "entertainment", "ai_legal", "theme_parks", "food"]
+    # News first, then tech, then entertainment, then everything else
+    category_order = ["newspaper", "tech", "entertainment", "ai_legal", "theme_parks", "food"]
     
     for cat_key in category_order:
         if cat_key in all_summaries and all_summaries[cat_key].strip():
@@ -604,8 +663,15 @@ def generate_html(title, body_markdown, article_count, total_count):
     # Bold
     html_body = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html_body)
     
-    # Links (standalone URLs on their own line)
-    html_body = re.sub(r'^(https?://\S+)$', r'<a href="\1">Read more →</a>', html_body, flags=re.MULTILINE)
+    # Links (standalone URLs on their own line) - show domain name
+    def make_link(match):
+        url = match.group(1)
+        # Extract domain for display
+        domain = urllib.parse.urlparse(url).netloc
+        domain = domain.replace('www.', '')
+        return f'<a href="{url}">{domain}</a>'
+    
+    html_body = re.sub(r'^(https?://\S+)$', make_link, html_body, flags=re.MULTILINE)
     
     # Bullet points  
     html_body = re.sub(r'^\* (.+)$', r'<li>\1</li>', html_body, flags=re.MULTILINE)
