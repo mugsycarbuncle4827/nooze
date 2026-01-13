@@ -694,7 +694,16 @@ def generate_html(title, body_markdown, article_count, total_count):
     html_body = re.sub(r'<p>\s*<ul>', '<ul>', html_body)
     html_body = re.sub(r'</ul>\s*</p>', '</ul>', html_body)
     
-    timestamp = datetime.now().strftime('%A, %B %d, %Y at %I:%M %p')
+    # Calculate Pacific time (handles DST automatically)
+    utc_now = datetime.now(timezone.utc)
+    # Check if DST is in effect (roughly March-November)
+    # PST = UTC-8, PDT = UTC-7
+    month = utc_now.month
+    is_dst = 3 <= month <= 10  # Rough DST approximation
+    pacific_offset = timedelta(hours=-7 if is_dst else -8)
+    pacific_now = utc_now + pacific_offset
+    
+    timestamp = pacific_now.strftime('%A, %B %d, %Y at %I:%M %p') + ' Pacific'
     
     html_page = f'''<!DOCTYPE html>
 <html lang="en">
@@ -716,7 +725,7 @@ def generate_html(title, body_markdown, article_count, total_count):
             line-height: 1.6;
         }}
         h1 {{
-            color: #ff6b6b;
+            color: #b388ff;
             border-bottom: 2px solid #333;
             padding-bottom: 10px;
             font-size: 1.8em;
@@ -790,9 +799,9 @@ def generate_html(title, body_markdown, article_count, total_count):
     
     print(f"HTML page generated: {OUTPUT_HTML}")
     
-    # Archive this edition
+    # Archive this edition (using Pacific time for filename)
     ARCHIVE_DIR.mkdir(exist_ok=True)
-    archive_filename = f"{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+    archive_filename = f"{pacific_now.strftime('%Y%m%d_%H%M')}.html"
     archive_path = ARCHIVE_DIR / archive_filename
     with open(archive_path, 'w', encoding='utf-8') as f:
         f.write(html_page)
@@ -818,7 +827,7 @@ def update_archive_index():
         try:
             date_str = archive.stem  # 20260110_1430
             dt = datetime.strptime(date_str, "%Y%m%d_%H%M")
-            display_date = dt.strftime("%A, %B %d, %Y at %I:%M %p")
+            display_date = dt.strftime("%A, %B %d, %Y at %I:%M %p") + " Pacific"
         except:
             display_date = archive.stem
         
@@ -841,7 +850,7 @@ def update_archive_index():
             line-height: 1.6;
         }}
         h1 {{
-            color: #ff6b6b;
+            color: #b388ff;
             border-bottom: 2px solid #333;
             padding-bottom: 10px;
         }}
@@ -958,12 +967,9 @@ def main():
         
         # Save to file
         filename = f"digest_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
-        full_digest = f"# Iwitless Nooze - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-        full_digest += headlines
+        full_digest = headlines
         full_digest += "\n\n---\n\n"
         full_digest += digest
-        full_digest += "\n\n---\n"
-        full_digest += f"*Generated from {len(filtered)} filtered articles (of {len(articles)} new)*\n"
         
         with open(filename, "w", encoding="utf-8") as f:
             f.write(full_digest)
