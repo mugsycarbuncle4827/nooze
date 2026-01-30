@@ -663,13 +663,13 @@ def generate_html(title, body_markdown, article_count, total_count):
     # Bold
     html_body = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html_body)
     
-    # Links (standalone URLs on their own line) - show domain name
+    # Links (standalone URLs on their own line) - show domain name, open in new tab
     def make_link(match):
         url = match.group(1)
         # Extract domain for display
         domain = urllib.parse.urlparse(url).netloc
         domain = domain.replace('www.', '')
-        return f'<a href="{url}">{domain}</a>'
+        return f'<a href="{url}" target="_blank">{domain}</a>'
     
     html_body = re.sub(r'^(https?://\S+)$', make_link, html_body, flags=re.MULTILINE)
     
