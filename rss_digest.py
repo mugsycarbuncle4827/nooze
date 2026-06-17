@@ -41,6 +41,15 @@ install_deps()
 import feedparser
 import anthropic
 
+# API errors that indicate a config problem (bad/retired model ID, bad key, no
+# model access) rather than a transient hiccup. These fail identically on every
+# call, so we let them crash loudly instead of masking them behind fallback text.
+FATAL_API_ERRORS = (
+    anthropic.NotFoundError,          # 404 - model ID doesn't exist or was retired
+    anthropic.AuthenticationError,    # 401 - missing/invalid ANTHROPIC_API_KEY
+    anthropic.PermissionDeniedError,  # 403 - key lacks access to this model
+)
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -94,7 +103,7 @@ SEEN_RETENTION_DAYS = 7
 FILTER_MODEL = "claude-haiku-4-5-20251001"
 
 # Model for synthesis (Sonnet = better quality)
-SYNTHESIS_MODEL = "claude-sonnet-4-20250514"
+SYNTHESIS_MODEL = "claude-sonnet-4-6"
 
 # Output files for GitHub Pages
 OUTPUT_HTML = SCRIPT_DIR / "index.html"
@@ -112,7 +121,7 @@ VIBE:
 - Exhausted but still paying attention
 - Sardonic without trying to land a punchline
 - Each bullet should convey actual information, not just vibes
-- 8-12 words per bullet — enough to know what happened
+- 12-18 words per bullet — give the observation room to breathe and the absurdity room to land
 - Em dashes welcome. Fragments okay. But the reader should understand the story.
 - You're noting things with a sigh, not performing
 
@@ -136,13 +145,13 @@ Unfortunately—
 * [third observation]
 * [fourth observation]
 
-Examples of GOOD VARIETY (notice how different they sound):
-* "CES unveiled seventeen AI refrigerators"
-* "Disney building walls around another ride— what else is new"
-* "Powell said the thing and markets did the thing"
-* "how many times can Paramount threaten a proxy fight"
-* "UK investigating X, which will definitely accomplish something"
-* "TSMC building another Arizona plant, Arizona still confused"
+Examples of GOOD VARIETY (notice how different they sound, and how each has room to breathe):
+* "CES unveiled seventeen AI refrigerators this year, not one of which anyone living had asked for"
+* "Disney's walling off another ride for refurbishment, which is corporate for closed until further notice"
+* "Powell said the careful thing about rates and markets did the predictable thing about it anyway"
+* "how many times can Paramount threaten the same proxy fight before the threat just becomes weather"
+* "the UK opened another investigation into Big Tech, which will surely accomplish something one of these decades"
+* "TSMC's breaking ground on another Arizona plant, and Arizona remains as confused as it was about the last"
 
 Examples of BAD (all the same pattern):
 * "Disney building walls because Imagineers need projects"
@@ -492,8 +501,10 @@ Respond with JSON only."""
         result = json.loads(text)
         return result
         
+    except FATAL_API_ERRORS:
+        raise  # bad model ID / key — don't silently wave everything through
     except Exception as e:
-        print(f"  Filter error for '{article['title'][:40]}...': {e}")
+        print(f"  Filter error for '{article['title'][:40]}...': {type(e).__name__}: {e}")
         return {"include": True, "priority": "medium", "reason": "Error - included by default"}
 
 
@@ -517,8 +528,11 @@ def generate_sardonic_headlines(client, filtered_articles):
         )
         return response.content[0].text.strip()
         
+    except FATAL_API_ERRORS:
+        raise  # bad model ID / key — surface it instead of a one-line fallback
     except Exception as e:
-        print(f"Headlines error: {e}")
+        print(f"  WARNING: headlines API error ({type(e).__name__}): {e}")
+        print("  WARNING: emitting fallback opener instead of generated headlines")
         return "Unfortunately:\n* The news happened again today."
 
 
@@ -628,8 +642,11 @@ ARTICLES TO PROCESS:
             )
             all_summaries[cat_key] = response.content[0].text
             
+        except FATAL_API_ERRORS:
+            raise  # bad model ID / key — surface it instead of raw-article fallback
         except Exception as e:
-            print(f"  Summary error for {cat_key}: {e}")
+            print(f"  WARNING: summary API error for {cat_key} ({type(e).__name__}): {e}")
+            print(f"  WARNING: using raw article text for {cat_key} instead of synthesized summaries")
             # Fallback: just use original headlines
             fallback = "\n\n".join([
                 f"**{a['title']}**\n\n{a['content'][:200]}...\n\n{a['link']}"
